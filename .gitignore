@@ -10,9 +10,9 @@
 /server/work.py
 /server/work1.py
 /server/.env
-/server/controllers
-/client/node_modules
+/server/controllers/userControllers.js
 /client/.env
+/client/node_modules
 /input_video.mp4
 
 # testing
