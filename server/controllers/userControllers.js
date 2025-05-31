@@ -1,486 +1,123 @@
 const users = require("../models/userSchema");
 const userotp = require("../models/userOtp");
 const nodemailer = require("nodemailer");
-const twilio=require('twilio');
-
+const twilio = require("twilio");
+require("dotenv").config(); // Load env variables
 
 // email config
-const tarnsporter = nodemailer.createTransport({
+const transporter = nodemailer.createTransport({
     service: "gmail",
     auth: {
-        user: "pesarusharanyareddy@gmail.com",
-        pass: "rmiw yyiv cljx yekh"
+        user: process.env.EMAIL,
+        pass: process.env.PASSWORD
     }
-})
+});
 
-const accountSid="AC468e64ff94bc183f6a0bb09e61275287";
-const authToken="2a7c3a73db32931445a0416654eacc2b";
-const client=twilio(accountSid,authToken);
-
-
+const accountSid = process.env.TWILIO_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const client = twilio(accountSid, authToken);
 
 exports.userregister = async (req, res) => {
-    const { fname, email, password ,phone} = req.body;
+    const { fname, email, password, phone } = req.body;
 
     if (!fname || !email || !password || !phone) {
-        res.status(400).json({ error: "Please Enter All Input Data" })
+        return res.status(400).json({ error: "Please Enter All Input Data" });
     }
 
     try {
-        const presuer = await users.findOne({ email: email });
+        const presuer = await users.findOne({ email });
 
         if (presuer) {
-            res.status(400).json({ error: "This User Allready exist in our db" })
-        } else {
-            const userregister = new users({
-                fname, email, password,phone
-            });
-
-            // here password hasing
-
-            const storeData = await userregister.save();
-            res.status(200).json(storeData);
+            return res.status(400).json({ error: "This User Already Exists in our DB" });
         }
-    } catch (error) {
-        res.status(400).json({ error: "Invalid Details", error })
-    }
 
+        const userregister = new users({ fname, email, password, phone });
+
+        const storeData = await userregister.save();
+        res.status(200).json(storeData);
+
+    } catch (error) {
+        res.status(400).json({ error: "Invalid Details", details: error });
+    }
 };
 
 // user send otp
 exports.userOtpSend = async (req, res) => {
-    const { email,password } = req.body;
-    const user=await users.findOne({email})
-    //console.log(user.phone)
-    if (!email) {
-        res.status(400).json({ error: "Please Enter Your Email" })
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+        return res.status(400).json({ error: "Please Enter Your Email and Password" });
     }
-    if(!password){
-        res.status(400).json({ error: "Please Enter Your Password" })
+
+    const user = await users.findOne({ email });
+    if (!user) {
+        return res.status(400).json({ error: "User not found" });
     }
-    else{
-        const cpass=await users.findOne({email:email});
-        if(!cpass){
-            res.status(400).json({ error: "invalid password" })
-        }
-    }
+
     try {
-        const presuer = await users.findOne({ email: email });
+        const OTP = Math.floor(100000 + Math.random() * 900000);
 
-        if (presuer) {
-            const OTP = Math.floor(100000 + Math.random() * 900000);
+        const existEmail = await userotp.findOne({ email });
 
-            const existEmail = await userotp.findOne({ email: email });
+        if (existEmail) {
+            const updateData = await userotp.findByIdAndUpdate(
+                existEmail._id,
+                { otp: OTP },
+                { new: true }
+            );
+            await updateData.save();
+        } else {
+            const saveOtpData = new userotp({ email, otp: OTP });
+            await saveOtpData.save();
+        }
 
+        const mailOptions = {
+            from: process.env.EMAIL,
+            to: email,
+            subject: "OTP Verification",
+            text: `Your OTP is: ${OTP}`
+        };
 
-            if (existEmail) {
-                const updateData = await userotp.findByIdAndUpdate({ _id: existEmail._id }, {
-                    otp: OTP
-                }, { new: true }
-                );
-                await updateData.save();
-
-                const mailOptions = {
-                    from: "pesarusharanyareddy@gmail.com",
-                    to: email,
-                    subject: "Sending Email For Otp Validation",
-                    text: `OTP:- ${OTP}`
-                }
-                tarnsporter.sendMail(mailOptions, (error, info) => {
-                    if (error) {
-                        console.log("error", error);
-                        res.status(400).json({ error: "email not send" })
-                    } else {
-                        console.log("Email sent", info.response);
-                        res.status(200).json({ message: "Email sent Successfully" })
-                    }
-                })
-                await client.messages.create({
-                    body: `YOUR OTP IS: ${OTP}`,
-                    to: `+91${user.phone}`,
-                    from: '+12058391344',
-                });
-        
-
+        transporter.sendMail(mailOptions, (error, info) => {
+            if (error) {
+                console.error("Email Error:", error);
+                return res.status(400).json({ error: "Email not sent" });
             } else {
-
-                const saveOtpData = new userotp({
-                    email, otp: OTP
-                });
-
-                await saveOtpData.save();
-                const mailOptions = {
-                    from: "pesarusharanyareddy@gmail.com",
-                    to: email,
-                    subject: "Sending Eamil For Otp Validation",
-                    text: `OTP:- ${OTP}`
-                }
-
-                tarnsporter.sendMail(mailOptions, (error, info) => {
-                    if (error) {
-                        console.log("error", error);
-                        res.status(400).json({ error: "email not send" })
-                    } else {
-                        console.log("Email sent", info.response);
-                        res.status(200).json({ message: "Email sent Successfully" })
-                    }
-                })
+                console.log("Email sent:", info.response);
             }
-        } else {
-            res.status(400).json({ error: "This User Not Exist In our Db" })
-        }
+        });
+
+        await client.messages.create({
+            body: `Your OTP is: ${OTP}`,
+            to: `+91${user.phone}`,
+            from: process.env.TWILIO_PHONE_NUMBER,
+        });
+
+        res.status(200).json({ message: "OTP sent via Email and SMS" });
+
     } catch (error) {
-        res.status(400).json({ error: "Invalid Details", error })
+        res.status(400).json({ error: "Error sending OTP", details: error });
     }
 };
 
+exports.userLogin = async (req, res) => {
+    const { email, otp } = req.body;
 
-exports.userLogin = async(req,res)=>{
-    const {email,otp} = req.body;
-    if(!otp || !email){
-        res.status(400).json({ error: "Please Enter Your OTP and email" })
+    if (!email || !otp) {
+        return res.status(400).json({ error: "Please Enter Your OTP and Email" });
     }
 
     try {
-        const otpverification = await userotp.findOne({email:email});
+        const otpverification = await userotp.findOne({ email });
 
-        if(otpverification.otp === otp){
-            const preuser = await users.findOne({email:email});
-
-            // token generate
+        if (otpverification && otpverification.otp === otp) {
+            const preuser = await users.findOne({ email });
             const token = await preuser.generateAuthtoken();
-           res.status(200).json({message:"User Login Succesfully Done",userToken:token});
-
-        }else{
-            res.status(400).json({error:"Invalid Otp"})
-        }
-    } catch (error) {
-        res.status(400).json({ error: "Invalid Details", error })
-    }
-}
-
-
-/*const users = require("../models/userSchema");
-const userotp = require("../models/userOtp");
-const nodemailer = require("nodemailer");
-const twilio=require('twilio');
-
-
-// email config
-const tarnsporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-        user: "pesarusharanyareddy@gmail.com",
-        pass: "rmiw yyiv cljx yekh"
-    }
-})
-
-const accountSid="AC468e64ff94bc183f6a0bb09e61275287";
-const authToken="2a7c3a73db32931445a0416654eacc2b";
-const client=twilio(accountSid,authToken);
-
-
-
-exports.userregister = async (req, res) => {
-    const { fname, email, password ,phone} = req.body;
-
-    if (!fname || !email || !password || !phone) {
-        res.status(400).json({ error: "Please Enter All Input Data" })
-    }
-
-    try {
-        const presuer = await users.findOne({ email: email });
-
-        if (presuer) {
-            res.status(400).json({ error: "This User Allready exist in our db" })
+            res.status(200).json({ message: "Login Successful", userToken: token });
         } else {
-            const userregister = new users({
-                fname, email, password,phone
-            });
-
-            // here password hasing
-
-            const storeData = await userregister.save();
-            res.status(200).json(storeData);
+            res.status(400).json({ error: "Invalid OTP" });
         }
     } catch (error) {
-        res.status(400).json({ error: "Invalid Details", error })
-    }
-
-};
-
-// user send otp
-exports.userOtpSend = async (req, res) => {
-    const { email,password } = req.body;
-    const user=await users.findOne({email})
-    //console.log(user)
-    console.log(user.phone)
-    if (!email) {
-        res.status(400).json({ error: "Please Enter Your Email" })
-    }
-    if(!password){
-        res.status(400).json({ error: "Please Enter Your Password" })
-    }
-    else{
-        const cpass=await users.findOne({email:email});
-        if(!cpass){
-            res.status(400).json({ error: "invalid password" })
-        }
-    }
-    try {
-        const presuer = await users.findOne({ email: email });
-
-        if (presuer) {
-            const OTP = Math.floor(100000 + Math.random() * 900000);
-
-            const existEmail = await userotp.findOne({ email: email });
-
-
-            if (existEmail) {
-                const updateData = await userotp.findByIdAndUpdate({ _id: existEmail._id }, {
-                    otp: OTP
-                }, { new: true }
-                );
-                await updateData.save();
-
-                const mailOptions = {
-                    from: "pesarusharanyareddy@gmail.com",
-                    to: email,
-                    subject: "Sending Eamil For Otp Validation",
-                    text: `OTP:- ${OTP}`
-                }
-                tarnsporter.sendMail(mailOptions, (error, info) => {
-                    if (error) {
-                        console.log("error", error);
-                        res.status(400).json({ error: "email not send" })
-                    } else {
-                        console.log("Email sent", info.response);
-                        res.status(200).json({ message: "Email sent Successfully" })
-                    }
-                })
-                await client.messages.create({
-                    body: `YOUR OTP IS: ${OTP}`,
-                    to: `+91${user.phone}`,
-                    from: '+12058391344',
-                });
-        
-
-            } else {
-
-                const saveOtpData = new userotp({
-                    email, otp: OTP
-                });
-
-                await saveOtpData.save();
-                const mailOptions = {
-                    from: "pesarusharanyareddy@gmail.com",
-                    to: email,
-                    subject: "Sending Email For Otp Validation",
-                    text: `OTP:- ${OTP}`
-                }
-
-                tarnsporter.sendMail(mailOptions, (error, info) => {
-                    if (error) {
-                        console.log("error", error);
-                        res.status(400).json({ error: "email not send" })
-                    } else {
-                        console.log("Email sent", info.response);
-                        res.status(200).json({ message: "Email sent Successfully" })
-                    }
-                })
-            }
-        } else {
-            res.status(400).json({ error: "This User Not Exist In our Db" })
-        }
-    } catch (error) {
-        res.status(400).json({ error: "Invalid Details", error })
+        res.status(400).json({ error: "Login Failed", details: error });
     }
 };
-
-
-exports.userLogin = async(req,res)=>{
-    const {email,otp} = req.body;
-    if(!otp || !email){
-        res.status(400).json({ error: "Please Enter Your OTP and email" })
-    }
-
-    try {
-        const otpverification = await userotp.findOne({email:email});
-
-        if(otpverification.otp === otp){
-            const preuser = await users.findOne({email:email});
-
-            // token generate
-            const token = await preuser.generateAuthtoken();
-           res.status(200).json({message:"User Login Succesfully Done",userToken:token});
-
-        }else{
-            res.status(400).json({error:"Invalid Otp"})
-        }
-    } catch (error) {
-        res.status(400).json({ error: "Invalid Details", error })
-    }
-}*/
-
-// the below code is same as the original one 
-
-/*const users = require("../models/userSchema");
-const userotp = require("../models/userOtp");
-const nodemailer = require("nodemailer");
-const twilio=require('twilio');
-
-
-// email config
-const tarnsporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-        user: "pesarusharanyareddy@gmail.com",
-        pass: "rmiw yyiv cljx yekh"
-    }
-})
-
-const accountSid="AC468e64ff94bc183f6a0bb09e61275287";
-const authToken="2a7c3a73db32931445a0416654eacc2b";
-const client=twilio(accountSid,authToken);
-
-
-
-exports.userregister = async (req, res) => {
-    const { fname, email, password ,phone} = req.body;
-
-    if (!fname || !email || !password || !phone) {
-        res.status(400).json({ error: "Please Enter All Input Data" })
-    }
-
-    try {
-        const presuer = await users.findOne({ email: email });
-
-        if (presuer) {
-            res.status(400).json({ error: "This User Allready exist in our db" })
-        } else {
-            const userregister = new users({
-                fname, email, password,phone
-            });
-
-            // here password hasing
-
-            const storeData = await userregister.save();
-            res.status(200).json(storeData);
-        }
-    } catch (error) {
-        res.status(400).json({ error: "Invalid Details", error })
-    }
-
-};
-
-// user send otp
-exports.userOtpSend = async (req, res) => {
-    const { email,password } = req.body;
-    const user=await users.findOne({email})
-    //console.log(user.phone)
-    if (!email) {
-        res.status(400).json({ error: "Please Enter Your Email" })
-    }
-    if(!password){
-        res.status(400).json({ error: "Please Enter Your Password" })
-    }
-    else{
-        const cpass=await users.findOne({email:email});
-        if(!cpass){
-            res.status(400).json({ error: "invalid password" })
-        }
-    }
-    try {
-        const presuer = await users.findOne({ email: email });
-
-        if (presuer) {
-            const OTP = Math.floor(100000 + Math.random() * 900000);
-
-            const existEmail = await userotp.findOne({ email: email });
-
-
-            if (existEmail) {
-                const updateData = await userotp.findByIdAndUpdate({ _id: existEmail._id }, {
-                    otp: OTP
-                }, { new: true }
-                );
-                await updateData.save();
-
-                const mailOptions = {
-                    from: "pesarusharanyareddy@gmail.com",
-                    to: email,
-                    subject: "Sending Email For Otp Validation",
-                    text: `OTP:- ${OTP}`
-                }
-                tarnsporter.sendMail(mailOptions, (error, info) => {
-                    if (error) {
-                        console.log("error", error);
-                        res.status(400).json({ error: "email not send" })
-                    } else {
-                        console.log("Email sent", info.response);
-                        res.status(200).json({ message: "Email sent Successfully" })
-                    }
-                })
-                await client.messages.create({
-                    body: `YOUR OTP IS: ${OTP}`,
-                    to: `+91${user.phone}`,
-                    from: '+12058391344',
-                });
-        
-
-            } else {
-
-                const saveOtpData = new userotp({
-                    email, otp: OTP
-                });
-
-                await saveOtpData.save();
-                const mailOptions = {
-                    from: "pesarusharanyareddy@gmail.com",
-                    to: email,
-                    subject: "Sending Eamil For Otp Validation",
-                    text: `OTP:- ${OTP}`
-                }
-
-                tarnsporter.sendMail(mailOptions, (error, info) => {
-                    if (error) {
-                        console.log("error", error);
-                        res.status(400).json({ error: "email not send" })
-                    } else {
-                        console.log("Email sent", info.response);
-                        res.status(200).json({ message: "Email sent Successfully" })
-                    }
-                })
-            }
-        } else {
-            res.status(400).json({ error: "This User Not Exist In our Db" })
-        }
-    } catch (error) {
-        res.status(400).json({ error: "Invalid Details", error })
-    }
-};
-
-
-exports.userLogin = async(req,res)=>{
-    const {email,otp} = req.body;
-    if(!otp || !email){
-        res.status(400).json({ error: "Please Enter Your OTP and email" })
-    }
-
-    try {
-        const otpverification = await userotp.findOne({email:email});
-
-        if(otpverification.otp === otp){
-            const preuser = await users.findOne({email:email});
-
-            // token generate
-            const token = await preuser.generateAuthtoken();
-           res.status(200).json({message:"User Login Succesfully Done",userToken:token});
-
-        }else{
-            res.status(400).json({error:"Invalid Otp"})
-        }
-    } catch (error) {
-        res.status(400).json({ error: "Invalid Details", error })
-    }
-}*/
